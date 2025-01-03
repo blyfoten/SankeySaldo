@@ -9,32 +9,35 @@ class SIEParser:
         self.transactions = []
         self.company_name = ""
         self.fiscal_year = ""
-        logging.basicConfig(level=logging.DEBUG)  # DEBUG-nivå för maximal information
+        logging.basicConfig(level=logging.DEBUG)
         self.logger = logging.getLogger(__name__)
 
     def parse_sie_file(self, content: bytes) -> Tuple[pd.DataFrame, Dict]:
         """Parse SIE file content and return transactions and metadata."""
         try:
-            # Logga rådata för debugging
-            self.logger.debug("Raw content (first 500 bytes):")
-            self.logger.debug(content[:500])
+            # Try different encodings
+            encodings = ['cp437', 'utf-8', 'iso-8859-1']
+            decoded_content = None
+            used_encoding = None
 
-            # Testa olika encodings om cp437 misslyckas
-            try:
-                decoded_content = content.decode('cp437')
-            except UnicodeDecodeError:
-                self.logger.warning("cp437 decoding failed, trying utf-8")
+            for encoding in encodings:
                 try:
-                    decoded_content = content.decode('utf-8')
+                    decoded_content = content.decode(encoding)
+                    used_encoding = encoding
+                    self.logger.info(f"Successfully decoded with {encoding}")
+                    break
                 except UnicodeDecodeError:
-                    self.logger.warning("utf-8 decoding failed, trying iso-8859-1")
-                    decoded_content = content.decode('iso-8859-1', errors='ignore')
+                    continue
+
+            if not decoded_content:
+                raise ValueError("Could not decode file with any supported encoding")
 
             lines = decoded_content.split('\n')
-            self.logger.debug(f"Antal rader i filen: {len(lines)}")
-            self.logger.debug("Första 5 rader i filen:")
-            for i, line in enumerate(lines[:5]):
-                self.logger.debug(f"Rad {i+1}: {repr(line)}")
+            self.logger.debug(f"File decoded with {used_encoding}, found {len(lines)} lines")
+
+            # Debug: Show first few lines
+            for i, line in enumerate(lines[:10]):
+                self.logger.debug(f"Line {i+1}: {repr(line)}")
 
             current_ver = None
             parsing_ver = False
@@ -42,79 +45,121 @@ class SIEParser:
             parsing_details = []
 
             for line_num, line in enumerate(lines, 1):
-                if not line.strip():
+                line = line.strip()
+                if not line:
                     continue
 
-                self.logger.debug(f"Processar rad {line_num}: {repr(line)}")
-                parts = line.strip().split(' ')
-                identifier = parts[0] if parts else ''
+                self.logger.debug(f"Processing line {line_num}: {repr(line)}")
 
-                # Count line types for debugging
+                # Split line into parts, preserving quoted strings
+                parts = []
+                current_part = []
+                in_quotes = False
+
+                for char in line:
+                    if char == '"':
+                        in_quotes = not in_quotes
+                    elif char.isspace() and not in_quotes:
+                        if current_part:
+                            parts.append(''.join(current_part))
+                            current_part = []
+                    else:
+                        current_part.append(char)
+
+                if current_part:
+                    parts.append(''.join(current_part))
+
+                if not parts:
+                    continue
+
+                identifier = parts[0]
                 line_types[identifier] = line_types.get(identifier, 0) + 1
 
+                # Parse different line types
                 if identifier == "#FNAMN":
                     self.company_name = ' '.join(parts[1:]).strip('"')
-                    self.logger.info(f"Hittat företagsnamn: {self.company_name}")
+                    self.logger.info(f"Found company name: {self.company_name}")
+                    parsing_details.append(f"Found company: {self.company_name}")
+
                 elif identifier == "#RAR":
-                    self.fiscal_year = parts[2]
-                    self.logger.info(f"Hittat räkenskapsår: {self.fiscal_year}")
+                    try:
+                        self.fiscal_year = parts[1] if len(parts) > 1 else parts[2]
+                        self.logger.info(f"Found fiscal year: {self.fiscal_year}")
+                        parsing_details.append(f"Found fiscal year: {self.fiscal_year}")
+                    except IndexError:
+                        self.logger.warning(f"Invalid #RAR line: {parts}")
+
                 elif identifier == "#KONTO":
-                    account_num = parts[1]
-                    account_name = ' '.join(parts[2:]).strip('"')
-                    self.accounts[account_num] = account_name
-                    self.logger.debug(f"Lagt till konto {account_num}: {account_name}")
+                    if len(parts) >= 2:
+                        account_num = parts[1]
+                        account_name = ' '.join(parts[2:]).strip('"')
+                        self.accounts[account_num] = account_name
+                        self.logger.debug(f"Added account {account_num}: {account_name}")
+
                 elif identifier == "#VER":
                     parsing_ver = True
+                    ver_parts = [p.strip('"') for p in parts[1:]]
                     current_ver = {
-                        'series': parts[1],
-                        'number': parts[2],
-                        'date': parts[3],
-                        'text': ' '.join(parts[4:]).strip('"') if len(parts) > 4 else ''
+                        'series': ver_parts[0] if len(ver_parts) > 0 else '',
+                        'number': ver_parts[1] if len(ver_parts) > 1 else '',
+                        'date': ver_parts[2] if len(ver_parts) > 2 else '',
+                        'text': ' '.join(ver_parts[3:]) if len(ver_parts) > 3 else ''
                     }
-                    self.logger.info(f"Börjar parse verifikation: {current_ver}")
-                    parsing_details.append(f"Found verification: Series={current_ver['series']}, Number={current_ver['number']}")
-                elif parsing_ver and line.startswith('{'):
-                    self.logger.debug(f"Processar transaktion: {repr(line)}")
-                    try:
-                        # Parse transaction row
-                        trans_parts = line.strip('{}').split(' ')
-                        if len(trans_parts) >= 3:
-                            date = trans_parts[0]
-                            account = trans_parts[1]
-                            amount = float(trans_parts[2].replace(',', '.'))
-                            description = ' '.join(trans_parts[3:]).strip('"') if len(trans_parts) > 3 else current_ver['text']
+                    self.logger.info(f"Started parsing verification: {current_ver}")
+                    parsing_details.append(f"Found verification: {current_ver['series']}-{current_ver['number']}")
 
+                elif parsing_ver and line.startswith('{'):
+                    self.logger.debug(f"Parsing transaction line: {repr(line)}")
+                    try:
+                        # Remove { and } and split
+                        trans_line = line.strip('{}')
+                        trans_parts = []
+                        current_part = []
+                        in_quotes = False
+
+                        for char in trans_line:
+                            if char == '"':
+                                in_quotes = not in_quotes
+                            elif char.isspace() and not in_quotes:
+                                if current_part:
+                                    trans_parts.append(''.join(current_part))
+                                    current_part = []
+                            else:
+                                current_part.append(char)
+
+                        if current_part:
+                            trans_parts.append(''.join(current_part))
+
+                        if len(trans_parts) >= 3:
                             transaction = {
-                                'date': date,
-                                'account': account,
-                                'amount': amount,
-                                'description': description,
+                                'date': trans_parts[0].strip('"'),
+                                'account': trans_parts[1].strip('"'),
+                                'amount': float(trans_parts[2].strip('"').replace(',', '.')),
+                                'description': ' '.join(trans_parts[3:]).strip('"') if len(trans_parts) > 3 else current_ver['text'],
                                 'ver_series': current_ver['series'],
                                 'ver_number': current_ver['number']
                             }
                             self.transactions.append(transaction)
-                            self.logger.debug(f"Lade till transaktion: {transaction}")
-                            parsing_details.append(f"Added transaction: Account={account}, Amount={amount}")
+                            self.logger.debug(f"Added transaction: {transaction}")
+                            parsing_details.append(f"Added transaction: Account={transaction['account']}, Amount={transaction['amount']}")
                     except Exception as e:
-                        self.logger.error(f"Fel vid parsing av transaktion på rad {line_num}: {str(e)}")
+                        self.logger.error(f"Error parsing transaction at line {line_num}: {str(e)}")
                         self.logger.error(f"Line content: {repr(line)}")
                         parsing_details.append(f"Error parsing transaction at line {line_num}: {str(e)}")
+
                 elif parsing_ver and line.startswith('}'):
-                    self.logger.debug("Avslutar verifikation")
                     parsing_ver = False
                     current_ver = None
 
-            # Convert transactions to DataFrame
+            # Create DataFrame
             if self.transactions:
                 df = pd.DataFrame(self.transactions)
-                self.logger.info(f"Parsed {len(df)} transactions")
+                self.logger.info(f"Successfully parsed {len(df)} transactions")
                 self.logger.debug("Sample of transactions:")
                 self.logger.debug(df.head().to_string())
             else:
                 df = pd.DataFrame(columns=['date', 'account', 'amount', 'description', 'ver_series', 'ver_number'])
                 self.logger.warning("No transactions found in the file")
-                self.logger.debug("File content summary:")
-                self.logger.debug(f"Line types found: {line_types}")
 
             metadata = {
                 'company_name': self.company_name,
@@ -128,4 +173,4 @@ class SIEParser:
         except Exception as e:
             self.logger.error(f"Error parsing SIE file: {str(e)}")
             self.logger.exception("Full stack trace:")
-            raise ValueError(f"Fel vid parsning av SIE-fil: {str(e)}")
+            raise ValueError(f"Error parsing SIE file: {str(e)}")
