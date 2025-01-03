@@ -9,49 +9,39 @@ class SankeyGenerator:
 
     def generate_sankey_data(self) -> go.Figure:
         """Generate Sankey diagram from transaction data."""
-        # Group transactions by account
+        # Group transactions by account and calculate net flow
         account_flows = self.df.groupby('account')['amount'].sum()
 
-        # Separate positive and negative flows
-        positive_flows = account_flows[account_flows > 0]
-        negative_flows = account_flows[account_flows < 0]
+        # Create nodes list
+        nodes = ["Ingående balans"]  # First node is always "Ingående balans"
+        account_nodes = [f"{acc} - {self.accounts.get(acc, 'Okänt konto')}" 
+                        for acc in account_flows.index]
+        nodes.extend(account_nodes)
 
-        # Create nodes and links
-        nodes = []
-        links = {
-            'source': [],
-            'target': [],
-            'value': [],
-            'color': []
-        }
+        # Create links data
+        sources = []
+        targets = []
+        values = []
+        colors = []
 
-        # Add source node (Start)
-        nodes.append("Ingående balans")
-        
-        # Add account nodes
-        for account, name in self.accounts.items():
-            nodes.append(f"{account} - {name}")
-
-        # Create links
-        for account, amount in positive_flows.items():
+        # Process each account's flow
+        for account in account_flows.index:
+            amount = account_flows[account]
             account_name = f"{account} - {self.accounts.get(account, 'Okänt konto')}"
-            source_idx = nodes.index("Ingående balans")
-            target_idx = nodes.index(account_name)
-            
-            links['source'].append(source_idx)
-            links['target'].append(target_idx)
-            links['value'].append(abs(float(amount)))
-            links['color'].append('rgba(44, 160, 44, 0.5)')  # Green for positive
+            account_idx = nodes.index(account_name)
 
-        for account, amount in negative_flows.items():
-            account_name = f"{account} - {self.accounts.get(account, 'Okänt konto')}"
-            source_idx = nodes.index(account_name)
-            target_idx = nodes.index("Ingående balans")
-            
-            links['source'].append(source_idx)
-            links['target'].append(target_idx)
-            links['value'].append(abs(float(amount)))
-            links['color'].append('rgba(214, 39, 40, 0.5)')  # Red for negative
+            if amount > 0:
+                # Positive flow: from "Ingående balans" to account
+                sources.append(0)  # "Ingående balans" is always at index 0
+                targets.append(account_idx)
+                values.append(abs(float(amount)))
+                colors.append('rgba(44, 160, 44, 0.5)')  # Green for positive
+            else:
+                # Negative flow: from account to "Ingående balans"
+                sources.append(account_idx)
+                targets.append(0)  # "Ingående balans" is always at index 0
+                values.append(abs(float(amount)))
+                colors.append('rgba(214, 39, 40, 0.5)')  # Red for negative
 
         # Create Sankey diagram
         fig = go.Figure(data=[go.Sankey(
@@ -63,15 +53,16 @@ class SankeyGenerator:
                 color="lightblue"
             ),
             link=dict(
-                source=links['source'],
-                target=links['target'],
-                value=links['value'],
-                color=links['color']
+                source=sources,
+                target=targets,
+                value=values,
+                color=colors
             )
         )])
 
+        # Update layout
         fig.update_layout(
-            title_text="Balansflöden",
+            title_text="Ekonomiska flöden",
             font_size=10,
             height=800
         )
