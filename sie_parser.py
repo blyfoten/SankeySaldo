@@ -111,15 +111,20 @@ class SIEParser:
                 elif parsing_ver and line.startswith('{'):
                     self.logger.debug(f"Parsing transaction line: {repr(line)}")
                     try:
-                        # Remove { and } and split
-                        trans_line = line.strip('{}')
+                        # Remove { and } and split on whitespace while preserving quotes
+                        trans_line = line.strip('{}').strip()
                         trans_parts = []
                         current_part = []
                         in_quotes = False
 
-                        for char in trans_line:
+                        # More precise parsing of transaction line
+                        for i, char in enumerate(trans_line):
                             if char == '"':
                                 in_quotes = not in_quotes
+                                if i > 0 and trans_line[i-1] != ' ':  # Handle quotes without spaces
+                                    if current_part:
+                                        trans_parts.append(''.join(current_part))
+                                        current_part = []
                             elif char.isspace() and not in_quotes:
                                 if current_part:
                                     trans_parts.append(''.join(current_part))
@@ -130,18 +135,34 @@ class SIEParser:
                         if current_part:
                             trans_parts.append(''.join(current_part))
 
-                        if len(trans_parts) >= 3:
+                        self.logger.debug(f"Parsed transaction parts: {trans_parts}")
+
+                        if len(trans_parts) >= 2:  # Changed from 3 to 2 as some lines might have implicit amounts
+                            # Handle dates with or without quotes
+                            date = trans_parts[0].strip('"')
+                            account = trans_parts[1].strip('"')
+
+                            # Handle amount with better error checking
+                            amount = 0.0
+                            if len(trans_parts) >= 3:
+                                amount_str = trans_parts[2].strip('"')
+                                # Handle both comma and period as decimal separator
+                                amount = float(amount_str.replace(',', '.'))
+
+                            # Get description, defaulting to verification text if none provided
+                            description = ' '.join(trans_parts[3:]).strip('"') if len(trans_parts) > 3 else current_ver['text']
+
                             transaction = {
-                                'date': trans_parts[0].strip('"'),
-                                'account': trans_parts[1].strip('"'),
-                                'amount': float(trans_parts[2].strip('"').replace(',', '.')),
-                                'description': ' '.join(trans_parts[3:]).strip('"') if len(trans_parts) > 3 else current_ver['text'],
+                                'date': date,
+                                'account': account,
+                                'amount': amount,
+                                'description': description,
                                 'ver_series': current_ver['series'],
                                 'ver_number': current_ver['number']
                             }
                             self.transactions.append(transaction)
                             self.logger.debug(f"Added transaction: {transaction}")
-                            parsing_details.append(f"Added transaction: Account={transaction['account']}, Amount={transaction['amount']}")
+                            parsing_details.append(f"Added transaction: Account={account}, Amount={amount}")
                     except Exception as e:
                         self.logger.error(f"Error parsing transaction at line {line_num}: {str(e)}")
                         self.logger.error(f"Line content: {repr(line)}")
