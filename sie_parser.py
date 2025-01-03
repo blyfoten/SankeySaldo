@@ -9,30 +9,74 @@ class SIEParser:
         self.transactions = []
         self.company_name = ""
         self.fiscal_year = ""
-        logging.basicConfig(level=logging.DEBUG)
+        logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
+
+    def _parse_transaction_line(self, line: str, current_ver: Dict) -> Dict:
+        """Parse a single transaction line."""
+        # Remove { and } and split the line, preserving quoted content
+        line = line.strip('{}').strip()
+        parts = []
+        current = []
+        in_quote = False
+
+        for char in line:
+            if char == '"':
+                in_quote = not in_quote
+                if current:  # Add accumulated part when quote ends
+                    parts.append(''.join(current))
+                    current = []
+            elif char.isspace() and not in_quote:
+                if current:
+                    parts.append(''.join(current))
+                    current = []
+            else:
+                current.append(char)
+
+        if current:
+            parts.append(''.join(current))
+
+        self.logger.info(f"Parsed transaction parts: {parts}")
+
+        if len(parts) < 2:
+            raise ValueError(f"Invalid transaction format, need at least 2 parts, got: {parts}")
+
+        # Parse transaction components
+        date = parts[0].strip('"')
+        account = parts[1].strip('"')
+
+        # Handle amount
+        amount = 0.0
+        if len(parts) >= 3:
+            amount_str = parts[2].strip('"')
+            # Handle both comma and period as decimal separator
+            try:
+                amount = float(amount_str.replace(',', '.'))
+            except ValueError:
+                self.logger.warning(f"Invalid amount format: {amount_str}")
+                amount = 0.0
+
+        # Get description
+        description = ' '.join(parts[3:]).strip('"') if len(parts) > 3 else current_ver.get('text', '')
+
+        return {
+            'date': date,
+            'account': account,
+            'amount': amount,
+            'description': description,
+            'ver_series': current_ver.get('series', ''),
+            'ver_number': current_ver.get('number', '')
+        }
 
     def parse_sie_file(self, content: bytes) -> Tuple[pd.DataFrame, Dict]:
         """Parse SIE file content and return transactions and metadata."""
         try:
             # Try cp437 first as it's known to work
-            try:
-                decoded_content = content.decode('cp437')
-                self.logger.info("Successfully decoded with cp437")
-            except UnicodeDecodeError:
-                # Fallback encodings
-                for encoding in ['utf-8', 'iso-8859-1']:
-                    try:
-                        decoded_content = content.decode(encoding)
-                        self.logger.info(f"Successfully decoded with {encoding}")
-                        break
-                    except UnicodeDecodeError:
-                        continue
-                else:
-                    raise ValueError("Could not decode file with any supported encoding")
+            decoded_content = content.decode('cp437')
+            self.logger.info("Successfully decoded with cp437")
 
             lines = decoded_content.split('\n')
-            self.logger.debug(f"Found {len(lines)} lines")
+            self.logger.info(f"Found {len(lines)} lines")
 
             current_ver = None
             parsing_ver = False
@@ -44,7 +88,7 @@ class SIEParser:
                 if not line:
                     continue
 
-                self.logger.debug(f"Processing line {line_num}: {repr(line)}")
+                self.logger.debug(f"Processing line {line_num}: {line}")
 
                 # Handle verification start
                 if line.startswith('#VER'):
@@ -54,71 +98,24 @@ class SIEParser:
                         'series': parts[1] if len(parts) > 1 else '',
                         'number': parts[2] if len(parts) > 2 else '',
                         'date': parts[3] if len(parts) > 3 else '',
-                        'text': ' '.join(parts[4:]) if len(parts) > 4 else ''
+                        'text': ' '.join(parts[4:]).strip('"') if len(parts) > 4 else ''
                     }
                     self.logger.info(f"Started parsing verification: {current_ver}")
                     parsing_details.append(f"Found verification: {current_ver['series']}-{current_ver['number']}")
 
                 # Handle transaction line
                 elif parsing_ver and line.startswith('{'):
-                    self.logger.debug(f"Found transaction line: {repr(line)}")
+                    self.logger.info(f"Found transaction line: {line}")
                     try:
-                        # Remove { and } and split the line
-                        trans_line = line.strip('{}').strip()
-
-                        # Split parts while preserving quoted strings
-                        parts = []
-                        current = []
-                        in_quote = False
-
-                        for char in trans_line:
-                            if char == '"':
-                                in_quote = not in_quote
-                            elif char.isspace() and not in_quote:
-                                if current:
-                                    parts.append(''.join(current))
-                                    current = []
-                            else:
-                                current.append(char)
-
-                        if current:
-                            parts.append(''.join(current))
-
-                        self.logger.debug(f"Transaction parts: {parts}")
-
-                        if len(parts) >= 2:  # At least date and account required
-                            date = parts[0].strip('"')
-                            account = parts[1].strip('"')
-
-                            # Parse amount if present
-                            amount = 0.0
-                            if len(parts) >= 3:
-                                amount_str = parts[2].strip('"')
-                                # Handle both comma and period as decimal separator
-                                amount = float(amount_str.replace(',', '.'))
-
-                            # Get description
-                            description = ' '.join(parts[3:]).strip('"') if len(parts) > 3 else current_ver['text']
-
-                            transaction = {
-                                'date': date,
-                                'account': account,
-                                'amount': amount,
-                                'description': description,
-                                'ver_series': current_ver['series'],
-                                'ver_number': current_ver['number']
-                            }
-
-                            self.transactions.append(transaction)
-                            self.logger.info(f"Added transaction: {transaction}")
-                            parsing_details.append(f"Added transaction: Account={account}, Amount={amount}")
+                        transaction = self._parse_transaction_line(line, current_ver)
+                        self.transactions.append(transaction)
+                        parsing_details.append(f"Added transaction: Account={transaction['account']}, Amount={transaction['amount']}")
                     except Exception as e:
                         self.logger.error(f"Error parsing transaction at line {line_num}: {str(e)}")
-                        self.logger.error(f"Line content: {repr(line)}")
                         parsing_details.append(f"Error parsing transaction at line {line_num}: {str(e)}")
 
                 # Handle verification end
-                elif parsing_ver and line.startswith('}'):
+                elif line.startswith('}'):
                     parsing_ver = False
                     current_ver = None
 
@@ -131,27 +128,19 @@ class SIEParser:
                     if identifier == "#FNAMN":
                         self.company_name = ' '.join(parts[1:]).strip('"')
                         self.logger.info(f"Found company name: {self.company_name}")
-                        parsing_details.append(f"Found company: {self.company_name}")
                     elif identifier == "#RAR":
-                        try:
-                            self.fiscal_year = parts[2] if len(parts) > 2 else parts[1]
-                            self.logger.info(f"Found fiscal year: {self.fiscal_year}")
-                            parsing_details.append(f"Found fiscal year: {self.fiscal_year}")
-                        except IndexError:
-                            self.logger.warning(f"Invalid #RAR line: {parts}")
+                        self.fiscal_year = parts[1] if len(parts) > 1 else ''
+                        self.logger.info(f"Found fiscal year: {self.fiscal_year}")
                     elif identifier == "#KONTO":
-                        if len(parts) >= 2:
+                        if len(parts) >= 3:
                             account_num = parts[1]
                             account_name = ' '.join(parts[2:]).strip('"')
                             self.accounts[account_num] = account_name
-                            self.logger.debug(f"Added account {account_num}: {account_name}")
 
             # Create DataFrame
             if self.transactions:
                 df = pd.DataFrame(self.transactions)
                 self.logger.info(f"Successfully parsed {len(df)} transactions")
-                self.logger.debug("Sample of transactions:")
-                self.logger.debug(df.head().to_string())
             else:
                 df = pd.DataFrame(columns=['date', 'account', 'amount', 'description', 'ver_series', 'ver_number'])
                 self.logger.warning("No transactions found in the file")
@@ -165,7 +154,7 @@ class SIEParser:
             }
 
             return df, metadata
+
         except Exception as e:
             self.logger.error(f"Error parsing SIE file: {str(e)}")
-            self.logger.exception("Full stack trace:")
             raise ValueError(f"Error parsing SIE file: {str(e)}")

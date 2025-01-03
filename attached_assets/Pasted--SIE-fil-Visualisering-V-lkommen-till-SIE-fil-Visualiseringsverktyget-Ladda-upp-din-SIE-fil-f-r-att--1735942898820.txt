@@ -1,0 +1,62 @@
+
+SIE-fil Visualisering
+Välkommen till SIE-fil Visualiseringsverktyget
+Ladda upp din SIE-fil för att se en visualisering av bokföringsbalansen som ett Sankey-diagram.
+
+Välj en SIE-fil
+
+Drag and drop file here
+Limit 200MB per file • SE, SI, SIE
+7909220258_R201601-201612.SE
+19.8KB
+Debug Information
+Filstorlek: 19831 bytes
+
+Filnamn: 7909220258_R201601-201612.SE
+
+Visa filens första rader (cp437)
+
+Kunde inte visa filinnehåll med utf-8 encoding
+
+Visa filens första rader (iso-8859-1)
+
+Företagsinformation
+Företag: CHRISTER FORSLUND
+
+Antal konton: 112
+
+Räkenskapsår: 20160101
+
+Fil innehåller:
+
+#FLAGGA: 1 rader
+#PROGRAM: 1 rader
+#FORMAT: 1 rader
+#GEN: 1 rader
+#SIETYP: 1 rader
+#ORGNR: 1 rader
+#FNAMN: 1 rader
+#RAR: 1 rader
+#KPTYP: 1 rader
+#KONTO: 112 rader
+#KTYP: 112 rader
+#IB: 6 rader
+#UB: 5 rader
+#RES: 9 rader
+#TRANS: 160 rader
+#PBUDGET: 36 rader
+Inga transaktioner hittades i filen.
+
+Parsing Detaljer
+Found company: CHRISTER FORSLUND Found fiscal year: 20160101 Found verification: A-1 Found verification: A-2 Found verification: A-3 Found verification: A-4 Found verification: A-5 Found verification: A-6 Found verification: A-7 Found verification: A-8 Found verification: A-9 Found verification: A-10 Found verification: A-11 Found verification: A-12 Found verification: A-13 Found verification: A-14 Found verification: A-15 Found verification: A-16 Found verification: A-17 Found verification: A-18 Found verification: A-19 Found verification: A-20 Found verification: A-21 Found verification: A-22 Found verification: A-23 Found verification: A-24 Found verification: A-25 Found verification: A-26 Found verification: A-27 Found verification: A-28 Found verification: A-29 Found verification: A-30 Found verification: A-31 Found verification: A-32 Found verification: A-33 Found verification: A-34 Found verification: I-1 Found verification: I-2 Found verification: I-3 Found verification: I-4 Found verification: I-5 Found verification: I-6 Found verification: I-7 Found verification: I-8 Found verification: I-9 Found verification: I-10 Found verification: I-11 Found verification: I-12 Found verification: K-1 Found verification: K-2 Found verification: K-3 Found verification: K-4 Found verification: K-5 Found verification: K-6 Found verification: K-7 Found verification: K-8 Found verification: K-9 Found verification: L-1 Found verification: L-2 Found verification: L-3 Found verification: L-4 Found verification: M-1 Found verification: U-1 Found verification: U-2 Found verification: U-3 Found verification: U-4
+
+Kontrollera att:
+
+Filen är i korrekt SIE-format
+Filen innehåller verifikationer (börjar med #VER)
+Verifikationerna innehåller transaktioner (rader som börjar med {)
+Instruktioner
+Ladda upp en SIE-fil genom att klicka på 'Välj en SIE-fil' ovan
+Visualiseringen genereras automatiskt
+Använd mushjulet för att zooma in/ut i diagrammet
+Klicka och dra för att panorera i diagrammet
