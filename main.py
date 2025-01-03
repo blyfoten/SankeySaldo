@@ -25,7 +25,7 @@ def main():
         # Show first few lines of the file
         try:
             sample_content = content[:500].decode('cp437')
-            with st.expander("Visa filens första rader"):
+            with st.expander("Visa filens första rader (CP437)"):
                 st.code(sample_content, language=None)
         except UnicodeDecodeError:
             st.warning("Kunde inte visa filinnehåll med cp437 encoding")
@@ -42,16 +42,27 @@ def main():
             # Parse SIE file with progress indicator
             with st.spinner('Läser in SIE-fil...'):
                 parser = SIEParser()
+
+                # Show parsing progress
+                progress_text = st.empty()
+                progress_text.text("Analyserar fil...")
+
                 df, metadata = parser.parse_sie_file(content)
+                progress_text.empty()
 
             # Display company information
             st.subheader("Företagsinformation")
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
             with col1:
                 st.write(f"**Företag:** {metadata['company_name']}")
                 st.write(f"**Antal konton:** {len(metadata['accounts'])}")
             with col2:
                 st.write(f"**Räkenskapsår:** {metadata['fiscal_year']}")
+            with col3:
+                if 'file_content' in metadata:
+                    st.write("**Fil innehåller:**")
+                    for key, count in metadata['file_content'].items():
+                        st.write(f"- {key}: {count} rader")
 
             # Display parsing results
             if not df.empty:
@@ -88,6 +99,9 @@ def main():
                     st.dataframe(df)
             else:
                 st.error("Inga transaktioner hittades i filen.")
+                if 'parsing_details' in metadata:
+                    st.write("### Parsing Detaljer")
+                    st.write(metadata['parsing_details'])
                 st.write("Kontrollera att:")
                 st.write("1. Filen är i korrekt SIE-format")
                 st.write("2. Filen innehåller verifikationer (börjar med #VER)")

@@ -38,6 +38,8 @@ class SIEParser:
 
             current_ver = None
             parsing_ver = False
+            line_types = {}
+            parsing_details = []
 
             for line_num, line in enumerate(lines, 1):
                 if not line.strip():
@@ -46,6 +48,9 @@ class SIEParser:
                 self.logger.debug(f"Processar rad {line_num}: {repr(line)}")
                 parts = line.strip().split(' ')
                 identifier = parts[0] if parts else ''
+
+                # Count line types for debugging
+                line_types[identifier] = line_types.get(identifier, 0) + 1
 
                 if identifier == "#FNAMN":
                     self.company_name = ' '.join(parts[1:]).strip('"')
@@ -67,6 +72,7 @@ class SIEParser:
                         'text': ' '.join(parts[4:]).strip('"') if len(parts) > 4 else ''
                     }
                     self.logger.info(f"Börjar parse verifikation: {current_ver}")
+                    parsing_details.append(f"Found verification: Series={current_ver['series']}, Number={current_ver['number']}")
                 elif parsing_ver and line.startswith('{'):
                     self.logger.debug(f"Processar transaktion: {repr(line)}")
                     try:
@@ -88,9 +94,11 @@ class SIEParser:
                             }
                             self.transactions.append(transaction)
                             self.logger.debug(f"Lade till transaktion: {transaction}")
+                            parsing_details.append(f"Added transaction: Account={account}, Amount={amount}")
                     except Exception as e:
                         self.logger.error(f"Fel vid parsing av transaktion på rad {line_num}: {str(e)}")
                         self.logger.error(f"Line content: {repr(line)}")
+                        parsing_details.append(f"Error parsing transaction at line {line_num}: {str(e)}")
                 elif parsing_ver and line.startswith('}'):
                     self.logger.debug("Avslutar verifikation")
                     parsing_ver = False
@@ -106,17 +114,14 @@ class SIEParser:
                 df = pd.DataFrame(columns=['date', 'account', 'amount', 'description', 'ver_series', 'ver_number'])
                 self.logger.warning("No transactions found in the file")
                 self.logger.debug("File content summary:")
-                line_types = {}
-                for line in lines:
-                    if line.strip():
-                        line_type = line.split(' ')[0] if ' ' in line else line
-                        line_types[line_type] = line_types.get(line_type, 0) + 1
                 self.logger.debug(f"Line types found: {line_types}")
 
             metadata = {
                 'company_name': self.company_name,
                 'fiscal_year': self.fiscal_year,
-                'accounts': self.accounts
+                'accounts': self.accounts,
+                'file_content': line_types,
+                'parsing_details': '\n'.join(parsing_details)
             }
 
             return df, metadata
