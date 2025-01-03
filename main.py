@@ -2,8 +2,61 @@ import streamlit as st
 import pandas as pd
 from sie_parser import SIEParser
 from sankey_generator import SankeyGenerator
+import plotly.express as px
+from datetime import datetime
 
 st.set_page_config(page_title="SIE-fil Visualisering", layout="wide")
+
+def calculate_financial_ratios(df: pd.DataFrame, accounts: dict) -> dict:
+    """Calculate key financial ratios from the transaction data."""
+    # Group by account and sum amounts
+    account_balances = df.groupby('account')['amount'].sum()
+
+    # Initialize categories
+    current_assets = 0  # Omsättningstillgångar (1100-1999)
+    current_liabilities = 0  # Kortfristiga skulder (2000-2999)
+    total_assets = 0  # Totala tillgångar (1000-1999)
+    equity = 0  # Eget kapital (2000-2099)
+    total_liabilities = 0  # Totala skulder (2000-2999)
+
+    # Calculate sums for each category
+    for account, balance in account_balances.items():
+        account_num = int(account)
+        if 1100 <= account_num <= 1999:
+            current_assets += balance
+            total_assets += balance
+        elif 1000 <= account_num <= 1099:
+            total_assets += balance
+        elif 2000 <= account_num <= 2999:
+            current_liabilities += abs(balance)
+            total_liabilities += abs(balance)
+        elif 2000 <= account_num <= 2099:
+            equity += abs(balance)
+
+    # Calculate ratios
+    liquidity_ratio = current_assets / current_liabilities if current_liabilities != 0 else 0
+    solvency_ratio = (total_assets - total_liabilities) / total_assets if total_assets != 0 else 0
+
+    return {
+        'liquidity_ratio': liquidity_ratio,
+        'solvency_ratio': solvency_ratio,
+        'current_assets': current_assets,
+        'current_liabilities': current_liabilities,
+        'total_assets': total_assets,
+        'total_liabilities': total_liabilities,
+        'equity': equity
+    }
+
+def create_monthly_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """Create monthly transaction summary."""
+    df['date'] = pd.to_datetime(df['date'], format='%Y%m%d')
+    monthly_summary = df.groupby(df['date'].dt.strftime('%Y-%m'))\
+                       .agg({
+                           'amount': ['count', 'sum', 'mean'],
+                           'account': 'nunique'
+                       })
+    monthly_summary.columns = ['Antal transaktioner', 'Total belopp', 'Genomsnitt belopp', 'Antal konton']
+    return monthly_summary
 
 def main():
     st.title("SIE-fil Visualisering")
@@ -20,21 +73,6 @@ def main():
         try:
             # Read file content
             content = uploaded_file.read()
-
-            # Add debug information
-            st.write("### Debug Information")
-            st.write(f"Filstorlek: {len(content)} bytes")
-            st.write(f"Filnamn: {uploaded_file.name}")
-
-            # Show file content samples with different encodings
-            encodings = ['cp437', 'utf-8', 'iso-8859-1']
-            for encoding in encodings:
-                try:
-                    sample_content = content[:500].decode(encoding)
-                    with st.expander(f"Visa filens första rader ({encoding})"):
-                        st.code(sample_content, language=None)
-                except UnicodeDecodeError:
-                    st.warning(f"Kunde inte visa filinnehåll med {encoding} encoding")
 
             # Parse SIE file with progress indicator
             with st.spinner('Läser in SIE-fil...'):
@@ -65,6 +103,32 @@ def main():
                     if not df.empty:
                         st.success(f"Hittade {len(df)} transaktioner!")
 
+                        # Calculate financial ratios
+                        ratios = calculate_financial_ratios(df, metadata['accounts'])
+
+                        # Display key figures in expanded section
+                        with st.expander("Visa nyckeltal", expanded=True):
+                            st.subheader("Finansiella nyckeltal")
+                            col1, col2 = st.columns(2)
+
+                            with col1:
+                                st.metric("Likviditetsgrad", f"{ratios['liquidity_ratio']:.2f}")
+                                st.metric("Soliditet", f"{ratios['solvency_ratio']:.2f}")
+                            with col2:
+                                st.metric("Omsättningstillgångar", f"{ratios['current_assets']:,.2f} kr")
+                                st.metric("Kortfristiga skulder", f"{abs(ratios['current_liabilities']):,.2f} kr")
+
+                        # Monthly summary
+                        st.subheader("Månadsöversikt")
+                        monthly_df = create_monthly_summary(df)
+                        st.dataframe(monthly_df)
+
+                        # Create monthly transaction volume chart
+                        fig = px.line(monthly_df, 
+                                    y='Antal transaktioner',
+                                    title='Transaktionsvolym per månad')
+                        st.plotly_chart(fig, use_container_width=True)
+
                         # Generate and display Sankey diagram
                         with st.spinner('Genererar Sankey-diagram...'):
                             sankey = SankeyGenerator(df, metadata['accounts'])
@@ -73,9 +137,6 @@ def main():
                                 st.plotly_chart(fig, use_container_width=True)
                             except Exception as e:
                                 st.error(f"Fel vid generering av Sankey-diagram: {str(e)}")
-                                st.write("Debug information:")
-                                st.write(f"DataFrame shape: {df.shape}")
-                                st.write("DataFrame columns:", df.columns.tolist())
 
                         # Display summary statistics
                         st.subheader("Sammanfattning")
@@ -106,22 +167,12 @@ def main():
                         if 'parsing_details' in metadata:
                             st.write("### Parsing Detaljer")
                             st.write(metadata['parsing_details'])
-                        st.write("Kontrollera att:")
-                        st.write("1. Filen är i korrekt SIE-format")
-                        st.write("2. Filen innehåller verifikationer (börjar med #VER)")
-                        st.write("3. Verifikationerna innehåller transaktioner (rader som börjar med {)")
 
                 except Exception as parse_error:
                     st.error(f"Fel vid parsing av fil: {str(parse_error)}")
-                    st.write("Debug information:")
-                    st.write(f"File size: {len(content)} bytes")
-                    st.write(f"First 100 bytes: {repr(content[:100])}")
 
         except Exception as e:
             st.error(f"Ett fel uppstod vid hantering av filen: {str(e)}")
-            st.write("Debug information:")
-            st.write(f"Error type: {type(e).__name__}")
-            st.write(f"Error details: {str(e)}")
 
     # Add footer with instructions
     st.markdown("---")
