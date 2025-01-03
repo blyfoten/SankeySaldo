@@ -14,64 +14,72 @@ class SIEParser:
 
     def _parse_transaction_line(self, line: str, current_ver: Dict) -> Dict:
         """Parse a single transaction line."""
-        # Remove { and } and split the line, preserving quoted content
-        line = line.strip('{}').strip()
+        # Remove leading { and trailing }, preserve internal spaces
+        line = line.lstrip('{').rstrip('}').strip()
+        self.logger.info(f"Processing transaction line: '{line}'")
+
+        # Handle empty lines
+        if not line:
+            raise ValueError("Empty transaction line")
+
+        # Split on whitespace while preserving quoted strings
         parts = []
         current = []
         in_quote = False
+        last_char = None
 
         for char in line:
-            if char == '"':
-                in_quote = not in_quote
-                if current:  # Add accumulated part when quote ends
+            if char == '"' and last_char != '\\':  # Handle escaped quotes
+                if in_quote:
                     parts.append(''.join(current))
                     current = []
+                in_quote = not in_quote
             elif char.isspace() and not in_quote:
                 if current:
                     parts.append(''.join(current))
                     current = []
             else:
                 current.append(char)
+            last_char = char
 
         if current:
             parts.append(''.join(current))
 
+        # Clean up parts
+        parts = [p.strip().strip('"') for p in parts if p.strip()]
         self.logger.info(f"Parsed transaction parts: {parts}")
 
         if len(parts) < 2:
             raise ValueError(f"Invalid transaction format, need at least 2 parts, got: {parts}")
 
         # Parse transaction components
-        date = parts[0].strip('"')
-        account = parts[1].strip('"')
-
-        # Handle amount
-        amount = 0.0
-        if len(parts) >= 3:
-            amount_str = parts[2].strip('"')
-            # Handle both comma and period as decimal separator
-            try:
-                amount = float(amount_str.replace(',', '.'))
-            except ValueError:
-                self.logger.warning(f"Invalid amount format: {amount_str}")
-                amount = 0.0
-
-        # Get description
-        description = ' '.join(parts[3:]).strip('"') if len(parts) > 3 else current_ver.get('text', '')
-
-        return {
-            'date': date,
-            'account': account,
-            'amount': amount,
-            'description': description,
+        transaction = {
+            'date': parts[0],
+            'account': parts[1],
+            'amount': 0.0,  # Default value
+            'description': current_ver.get('text', ''),  # Default to verification text
             'ver_series': current_ver.get('series', ''),
             'ver_number': current_ver.get('number', '')
         }
 
+        # Parse amount if present
+        if len(parts) >= 3:
+            try:
+                amount_str = parts[2].replace(',', '.')
+                transaction['amount'] = float(amount_str)
+            except ValueError:
+                self.logger.warning(f"Invalid amount format: {parts[2]}")
+
+        # Add description if present
+        if len(parts) > 3:
+            transaction['description'] = ' '.join(parts[3:])
+
+        return transaction
+
     def parse_sie_file(self, content: bytes) -> Tuple[pd.DataFrame, Dict]:
         """Parse SIE file content and return transactions and metadata."""
         try:
-            # Try cp437 first as it's known to work
+            # Decode with cp437 as it's known to work for SIE files
             decoded_content = content.decode('cp437')
             self.logger.info("Successfully decoded with cp437")
 
@@ -83,12 +91,11 @@ class SIEParser:
             line_types = {}
             parsing_details = []
 
+            # Process each line
             for line_num, line in enumerate(lines, 1):
                 line = line.strip()
                 if not line:
                     continue
-
-                self.logger.debug(f"Processing line {line_num}: {line}")
 
                 # Handle verification start
                 if line.startswith('#VER'):
@@ -105,13 +112,17 @@ class SIEParser:
 
                 # Handle transaction line
                 elif parsing_ver and line.startswith('{'):
-                    self.logger.info(f"Found transaction line: {line}")
                     try:
                         transaction = self._parse_transaction_line(line, current_ver)
                         self.transactions.append(transaction)
-                        parsing_details.append(f"Added transaction: Account={transaction['account']}, Amount={transaction['amount']}")
+                        self.logger.info(f"Added transaction: {transaction}")
+                        parsing_details.append(
+                            f"Added transaction: Account={transaction['account']}, "
+                            f"Amount={transaction['amount']}, Date={transaction['date']}"
+                        )
                     except Exception as e:
                         self.logger.error(f"Error parsing transaction at line {line_num}: {str(e)}")
+                        self.logger.error(f"Line content: {repr(line)}")
                         parsing_details.append(f"Error parsing transaction at line {line_num}: {str(e)}")
 
                 # Handle verification end
@@ -127,10 +138,8 @@ class SIEParser:
 
                     if identifier == "#FNAMN":
                         self.company_name = ' '.join(parts[1:]).strip('"')
-                        self.logger.info(f"Found company name: {self.company_name}")
                     elif identifier == "#RAR":
                         self.fiscal_year = parts[1] if len(parts) > 1 else ''
-                        self.logger.info(f"Found fiscal year: {self.fiscal_year}")
                     elif identifier == "#KONTO":
                         if len(parts) >= 3:
                             account_num = parts[1]
