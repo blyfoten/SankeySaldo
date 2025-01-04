@@ -20,6 +20,14 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+attached_assets/
+.upm/
+.pythonlibs/
+uv.lock
+
+# Replit
+.replit
+replit.nix
 
 # Streamlit
 .streamlit/secrets.toml
